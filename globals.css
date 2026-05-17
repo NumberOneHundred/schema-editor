@@ -1,0 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0B0B0F; color: #E2E2F0; font-family: 'DM Sans', sans-serif; }
+input, textarea, button { font-family: inherit; }
