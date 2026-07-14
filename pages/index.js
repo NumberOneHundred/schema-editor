@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react";
 import { db, ref, set, get, onValue, remove } from "../lib/firebase";
-import { parseSections, parseBlocks, blocksToText, sectionsToFull, inlineDiff, calcChangePercent } from "../lib/parsers";
+import { parseSections, parseBlocks, blocksToText, sectionsToFull, inlineDiff, calcChangePercent, normalizeSchemaText, validateSectionBlocks } from "../lib/parsers";
 import Head from "next/head";
 
 const P = {bg:"#0B0B0F",s:"#14141E",s2:"#1A1A28",s3:"#20202E",b:"#2A2A3C",ba:"#6C6CFF",t:"#E2E2F0",m:"#8080A0",d:"#4A4A64",a:"#6C6CFF",as:"rgba(108,108,255,.1)",g:"#3DD68C",gs:"rgba(61,214,140,.1)",o:"#FFB347",os:"rgba(255,179,71,.1)",r:"#FF6B6B",rs:"rgba(255,107,107,.08)",bl:"#47B3FF",bls:"rgba(71,179,255,.1)",pk:"#FF6EB4",pks:"rgba(255,110,180,.08)",y:"#FFD93D",ys:"rgba(255,217,61,.1)"};
@@ -33,6 +33,14 @@ function ChangeBadge({pct}){
   if(pct<20)return<span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:P.gs,color:P.g}}>мало правок ({pct}%)</span>;
   if(pct<50)return<span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:P.os,color:P.o}}>средне ({pct}%)</span>;
   return<span style={{fontSize:9,padding:"2px 8px",borderRadius:10,background:P.rs,color:P.r}}>сильно изменено ({pct}%)</span>;
+}
+
+function ValidationBanner({issues,onOpenRaw}){
+  if(!issues||!issues.length)return null;
+  return <div style={{marginBottom:12,display:"flex",flexDirection:"column",gap:5}}>{issues.map((issue,i)=>{
+    const isError=issue.level==="error";const c=isError?P.r:P.o;const bg=isError?P.rs:P.os;
+    return <div key={i} style={{display:"flex",alignItems:"center",gap:8,padding:"7px 10px",borderRadius:7,border:"1px solid "+c+"35",background:bg,color:c,fontSize:11,lineHeight:1.4}}><span>{isError?"⚠️":"ℹ️"}</span><span style={{flex:1}}>{issue.text}</span>{onOpenRaw&&<button onClick={onOpenRaw} style={{padding:"3px 8px",borderRadius:4,border:"1px solid "+c+"50",background:"transparent",color:c,fontSize:9,fontWeight:600,cursor:"pointer",whiteSpace:"nowrap"}}>Открыть разметку</button>}</div>;
+  })}</div>;
 }
 
 /* Editable line */
@@ -135,9 +143,9 @@ function ImportModal({onImport,onClose}){
   async function handleFile(e){const file=e.target.files[0];if(!file)return;const XLSX=await import("xlsx");const reader=new FileReader();
     reader.onload=ev=>{try{const wb=XLSX.read(ev.target.result,{type:"array"});const ws=wb.Sheets[wb.SheetNames[0]];const data=XLSX.utils.sheet_to_json(ws,{header:1});const header=data[0]||[];let tc=-1,ic=-1,ttc=-1;
       for(let r=1;r<Math.min(data.length,5);r++){const row=data[r];if(!row)continue;for(let c=0;c<row.length;c++){if(String(row[c]||"").includes("# ПЛАН")&&tc===-1)tc=c;}}
-      header.forEach((h,i)=>{const hl=String(h||"").toLowerCase().trim();if((hl==="id"||hl==="id схемы")&&ic===-1)ic=i;if((hl==="тема"||hl==="название")&&ttc===-1)ttc=i;});
+      header.forEach((h,i)=>{const hl=String(h||"").toLowerCase().trim();if((hl==="id"||hl==="id схемы")&&ic===-1)ic=i;if((hl==="тема"||hl==="название")&&ttc===-1)ttc=i;if(hl==="полный текст")tc=i;});
       if(tc===-1)tc=0;if(ic===-1)ic=5;if(ttc===-1)ttc=4;
-      const schemas=[];for(let r=1;r<data.length;r++){const row=data[r];if(!row)continue;const raw=String(row[tc]||"");if(!raw.includes("ПЛАН")&&!raw.includes("ТЕОРИЯ"))continue;schemas.push({id:String(row[ic]||r),title:String(row[ttc]||"Схема"),raw});}
+      const schemas=[];for(let r=1;r<data.length;r++){const row=data[r];if(!row)continue;const raw=normalizeSchemaText(row[tc]||"");if(!raw.includes("ПЛАН")&&!raw.includes("ТЕОРИЯ"))continue;const sections=parseSections(raw);const issues=[...validateSectionBlocks(sections["ТЕОРИЯ"],"ТЕОРИЯ"),...validateSectionBlocks(sections["ФИНАЛЬНЫЙ БОСС"],"ФИНАЛЬНЫЙ БОСС")];schemas.push({id:String(row[ic]||r),title:String(row[ttc]||"Схема"),raw,issues});}
       setFs(schemas);}catch(err){alert("Ошибка: "+err.message);}};reader.readAsArrayBuffer(file);}
   return(<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.7)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={onClose}>
     <div onClick={e=>e.stopPropagation()} style={{background:P.s,border:"1px solid "+P.b,borderRadius:14,padding:24,width:540,maxHeight:"80vh",overflow:"auto"}}>
@@ -147,7 +155,7 @@ function ImportModal({onImport,onClose}){
         <textarea value={text} onChange={e=>setText(e.target.value)} placeholder="Текст схемы..." rows={10} style={{width:"100%",background:P.bg,color:P.t,border:"1px solid "+P.b,borderRadius:7,padding:10,fontSize:12,fontFamily:"'IBM Plex Mono',monospace",resize:"vertical",boxSizing:"border-box"}}/>
         <button onClick={()=>{if(text.includes("ПЛАН"))onImport([{id:sid||"new",title:tit||"Без названия",raw:text.trim()}]);}} style={{marginTop:10,padding:"8px 20px",borderRadius:7,border:"none",background:P.a,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>Импортировать</button></div>
       ):(<div><label style={{display:"block",padding:"32px 16px",border:"2px dashed "+P.b,borderRadius:10,textAlign:"center",cursor:"pointer",color:P.m,fontSize:12}}>📂 Выбери .xlsx<input type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:"none"}}/></label>
-        {fs&&<div style={{marginTop:10}}><div style={{fontSize:12,color:P.g,marginBottom:8}}>Найдено: {fs.length}</div><div style={{maxHeight:200,overflow:"auto"}}>{fs.map(s=><div key={s.id} style={{fontSize:11,color:P.m,padding:"3px 0",display:"flex",gap:6}}><span style={{color:P.d,fontWeight:600,minWidth:40}}>#{s.id}</span><span>{s.title}</span></div>)}</div><button onClick={()=>onImport(fs)} style={{marginTop:10,padding:"8px 20px",borderRadius:7,border:"none",background:P.a,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>Импортировать ({fs.length})</button></div>}</div>)}
+        {fs&&<div style={{marginTop:10}}><div style={{fontSize:12,color:P.g,marginBottom:8}}>Найдено: {fs.length}{fs.some(s=>s.issues?.length)&&<span style={{color:P.o}}> • с предупреждениями: {fs.filter(s=>s.issues?.length).length}</span>}</div><div style={{maxHeight:240,overflow:"auto"}}>{fs.map(s=><div key={s.id} style={{fontSize:11,color:P.m,padding:"5px 0",borderBottom:"1px solid "+P.b}}><div style={{display:"flex",gap:6}}><span style={{color:P.d,fontWeight:600,minWidth:40}}>#{s.id}</span><span>{s.title}</span></div>{s.issues?.map((x,i)=><div key={i} style={{fontSize:9,color:x.level==="error"?P.r:P.o,marginLeft:46,marginTop:2}}>⚠ {x.text}</div>)}</div>)}</div><button onClick={()=>onImport(fs)} style={{marginTop:10,padding:"8px 20px",borderRadius:7,border:"none",background:P.a,color:"#fff",fontSize:12,fontWeight:600,cursor:"pointer"}}>Импортировать ({fs.length})</button></div>}</div>)}
     </div></div>);
 }
 
@@ -228,6 +236,7 @@ export default function Home(){
   const[reassignMode,setReassignMode]=useState(false);
   const[filterEditor,setFilterEditor]=useState("all");
   const[loading,setLoading]=useState(true);
+  const[rawEdit,setRawEdit]=useState(false);
 
   useEffect(()=>{const u1=onValue(ref(db,"schemas"),snap=>{if(snap.val())setSchemas(Object.values(snap.val()));else setSchemas([]);setLoading(false);});
     const u2=onValue(ref(db,"users"),snap=>{if(snap.val())setUsers(Object.values(snap.val()));else setUsers([]);});
@@ -241,8 +250,12 @@ export default function Home(){
   const curSec=sel?(sel.editedSections||sel.sections):{};
   const secNames=["ПЛАН","ТЕОРИЯ","ФИНАЛЬНЫЙ БОСС","КОНСПЕКТ"].filter(k=>curSec[k]||(sel&&sel.sections[k]));
   const tB=parseBlocks(curSec["ТЕОРИЯ"]);const bB=parseBlocks(curSec["ФИНАЛЬНЫЙ БОСС"]);
+  const isBlockSection=sec==="ТЕОРИЯ"||sec==="ФИНАЛЬНЫЙ БОСС";
+  const sectionIssues=isBlockSection?validateSectionBlocks(curSec[sec],sec):[];
 
-  function handleImport(inc){inc.forEach(s=>{saveSchema({id:s.id,title:s.title,original:s.raw,sections:parseSections(s.raw),editedSections:null,editor:null,status:"unassigned",comments:{}});});setShowImport(false);}
+  useEffect(()=>setRawEdit(false),[selId,sec]);
+
+  function handleImport(inc){inc.forEach(s=>{const raw=normalizeSchemaText(s.raw);const sections=parseSections(raw);const existing=schemas.find(x=>x.id===s.id);if(existing){const inWork=existing.status!=="unassigned"||existing.editor||existing.editedSections;saveSchema({...existing,title:s.title||existing.title,...(inWork?{editedSections:sections}:{original:raw,sections,editedSections:null})});}else{saveSchema({id:s.id,title:s.title,original:raw,sections,editedSections:null,editor:null,status:"unassigned",comments:{}});}});setShowImport(false);}
   function handleAssign(ids,editor){ids.forEach(id=>{const s=schemas.find(x=>x.id===id);if(s)saveSchema({...s,editor,status:"editing",editedSections:s.editedSections||{...s.sections}});});setShowAssign(false);}
   function updateSection(sn,v){if(!sel)return;const es={...(sel.editedSections||sel.sections),[sn]:v};saveSchema({...sel,editedSections:es});}
   function updateBlock(sn,idx,v){if(!sel)return;const src=(sel.editedSections||sel.sections)[sn];const bs=parseBlocks(src);bs[idx]={...bs[idx],content:v};updateSection(sn,blocksToText(bs));}
@@ -303,9 +316,14 @@ export default function Home(){
               <div style={{display:"flex",gap:5,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
                 {secNames.map(s=><STab key={s} label={s} active={sec===s} onClick={()=>setSec(s)} count={s==="ТЕОРИЯ"?tB.length:s==="ФИНАЛЬНЫЙ БОСС"?bB.length:undefined}/>)}
                 <button onClick={()=>setShowOrig(true)} style={{padding:"6px 13px",borderRadius:7,border:"1px solid "+P.b,background:"transparent",color:P.d,fontSize:12,cursor:"pointer"}}>📋 Оригинал</button>
+                {isBlockSection&&<button onClick={()=>setRawEdit(!rawEdit)} style={{padding:"6px 13px",borderRadius:7,border:"1px solid "+(rawEdit?P.ba:P.b),background:rawEdit?P.as:"transparent",color:rawEdit?P.a:P.d,fontSize:12,cursor:"pointer"}}>🧩 Разметка</button>}
               </div>
 
-              {mode==="reviewer"||mode==="manager"?(
+              <ValidationBanner issues={sectionIssues} onOpenRaw={isBlockSection&&!rawEdit?()=>setRawEdit(true):null}/>
+
+              {rawEdit&&isBlockSection?(
+                <SectionEditor text={curSec[sec]||""} onChange={v=>updateSection(sec,normalizeSchemaText(v))}/>
+              ):mode==="reviewer"||mode==="manager"?(
                 <div>
                   <ReviewDiffView schema={sel} section={sec} onUpdateEdited={(sn,v)=>updateSection(sn,v)} onComment={(bk,txt)=>addComment(bk,txt)}/>
                   <div style={{marginTop:16,display:"flex",gap:8}}>
