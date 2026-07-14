@@ -215,11 +215,13 @@ function LoginScreen({users,onLogin}){
 }
 
 /* Export */
-async function exportXlsx(schemas){
+async function exportXlsx(schemas,{approvedOnly=false}={}){
+  const exportSchemas=approvedOnly?schemas.filter(s=>s.status==="approved"):schemas;
+  if(exportSchemas.length===0){alert(approvedOnly?"Нет схем со статусом «Принято».":"Нет схем для выгрузки.");return;}
   const XLSX=await import("xlsx");
   const rows=[["ID","Тема","Редактор","Статус","ПЛАН","ТЕОРИЯ","ФИНАЛЬНЫЙ БОСС","КОНСПЕКТ","Полный текст"]];
-  schemas.forEach(s=>{const sec=s.editedSections||s.sections;rows.push([s.id,s.title,s.editor||"",(STS[s.status]||{}).l||"",sec["ПЛАН"]||"",sec["ТЕОРИЯ"]||"",sec["ФИНАЛЬНЫЙ БОСС"]||"",sec["КОНСПЕКТ"]||"",sectionsToFull(sec)]);});
-  const ws=XLSX.utils.aoa_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Схемы");XLSX.writeFile(wb,"schemas_export.xlsx");
+  exportSchemas.forEach(s=>{const sec=s.editedSections||s.sections;rows.push([s.id,s.title,s.editor||"",(STS[s.status]||{}).l||"",sec["ПЛАН"]||"",sec["ТЕОРИЯ"]||"",sec["ФИНАЛЬНЫЙ БОСС"]||"",sec["КОНСПЕКТ"]||"",sectionsToFull(sec)]);});
+  const ws=XLSX.utils.aoa_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Схемы");XLSX.writeFile(wb,approvedOnly?"schemas_approved_export.xlsx":"schemas_export.xlsx");
 }
 
 /* ═══ MAIN ═══ */
@@ -283,7 +285,7 @@ export default function Home(){
           {mode==="manager"&&schemas.length>0&&<button onClick={()=>{setReassignMode(false);setShowAssign(true);}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.o+"40",background:P.os,color:P.o,fontSize:11,fontWeight:600,cursor:"pointer"}}>👤</button>}
           {mode==="manager"&&schemas.length>0&&<button onClick={()=>{setReassignMode(true);setShowAssign(true);}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.y+"40",background:P.ys,color:P.y,fontSize:11,fontWeight:600,cursor:"pointer"}}>🔄</button>}
           {mode==="manager"&&<button onClick={()=>setShowUsers(true)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.bl+"40",background:P.bls,color:P.bl,fontSize:11,fontWeight:600,cursor:"pointer"}}>👥</button>}
-          {mode==="manager"&&schemas.length>0&&<button onClick={()=>exportXlsx(schemas)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.a+"40",background:P.as,color:P.a,fontSize:11,fontWeight:600,cursor:"pointer"}}>↓</button>}
+          {mode==="manager"&&schemas.length>0&&<button title="Выгрузить только схемы со статусом «Принято»" onClick={()=>exportXlsx(schemas,{approvedOnly:true})} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.a+"40",background:P.as,color:P.a,fontSize:11,fontWeight:600,cursor:"pointer"}}>↓ Принятые ({schemas.filter(s=>s.status==="approved").length})</button>}
           <button onClick={()=>setUser(null)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.r+"40",background:P.rs,color:P.r,fontSize:11,fontWeight:600,cursor:"pointer"}}>Выйти</button>
         </div>
       </div>
