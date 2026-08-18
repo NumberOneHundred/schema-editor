@@ -215,13 +215,16 @@ function LoginScreen({users,onLogin}){
 }
 
 /* Export */
-async function exportXlsx(schemas,{approvedOnly=false}={}){
-  const exportSchemas=approvedOnly?schemas.filter(s=>s.status==="approved"):schemas;
-  if(exportSchemas.length===0){alert(approvedOnly?"Нет схем со статусом «Принято».":"Нет схем для выгрузки.");return;}
+async function exportXlsx(schemas,{approvedOnly=false,selectedIds=null}={}){
+  let exportSchemas=approvedOnly?schemas.filter(s=>s.status==="approved"):schemas;
+  if(selectedIds){const ids=new Set(selectedIds.map(String));exportSchemas=exportSchemas.filter(s=>ids.has(String(s.id)));}
+  if(exportSchemas.length===0){alert(selectedIds?"Не выбрано ни одной схемы.":approvedOnly?"Нет схем со статусом «Принято».":"Нет схем для выгрузки.");return;}
   const XLSX=await import("xlsx");
   const rows=[["ID","Тема","Редактор","Статус","ПЛАН","ТЕОРИЯ","ФИНАЛЬНЫЙ БОСС","КОНСПЕКТ","Полный текст"]];
   exportSchemas.forEach(s=>{const sec=s.editedSections||s.sections;rows.push([s.id,s.title,s.editor||"",(STS[s.status]||{}).l||"",sec["ПЛАН"]||"",sec["ТЕОРИЯ"]||"",sec["ФИНАЛЬНЫЙ БОСС"]||"",sec["КОНСПЕКТ"]||"",sectionsToFull(sec)]);});
-  const ws=XLSX.utils.aoa_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Схемы");XLSX.writeFile(wb,approvedOnly?"schemas_approved_export.xlsx":"schemas_export.xlsx");
+  const ws=XLSX.utils.aoa_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Схемы");
+  const fileName=selectedIds?"schemas_selected_export.xlsx":approvedOnly?"schemas_approved_export.xlsx":"schemas_export.xlsx";
+  XLSX.writeFile(wb,fileName);
 }
 
 /* ═══ MAIN ═══ */
@@ -239,6 +242,7 @@ export default function Home(){
   const[filterEditor,setFilterEditor]=useState("all");
   const[loading,setLoading]=useState(true);
   const[rawEdit,setRawEdit]=useState(false);
+  const[selectedIds,setSelectedIds]=useState([]);
 
   useEffect(()=>{const u1=onValue(ref(db,"schemas"),snap=>{if(snap.val())setSchemas(Object.values(snap.val()));else setSchemas([]);setLoading(false);});
     const u2=onValue(ref(db,"users"),snap=>{if(snap.val())setUsers(Object.values(snap.val()));else setUsers([]);});
@@ -248,6 +252,8 @@ export default function Home(){
   const mode=user?.role||"editor";
   const filtered=useMemo(()=>{let list=schemas;if(mode==="editor"&&user)list=list.filter(s=>s.editor===user.name);
     if(filterEditor==="all")return list;if(filterEditor==="__none")return list.filter(s=>!s.editor);return list.filter(s=>s.editor===filterEditor);},[schemas,filterEditor,mode,user]);
+  const selectedSet=useMemo(()=>new Set(selectedIds.map(String)),[selectedIds]);
+  const allFilteredSelected=filtered.length>0&&filtered.every(s=>selectedSet.has(String(s.id)));
   const sel=schemas.find(s=>s.id===selId);
   const curSec=sel?(sel.editedSections||sel.sections):{};
   const secNames=["ПЛАН","ТЕОРИЯ","ФИНАЛЬНЫЙ БОСС","КОНСПЕКТ"].filter(k=>curSec[k]||(sel&&sel.sections[k]));
@@ -256,6 +262,10 @@ export default function Home(){
   const sectionIssues=isBlockSection?validateSectionBlocks(curSec[sec],sec):[];
 
   useEffect(()=>setRawEdit(false),[selId,sec]);
+  useEffect(()=>{setSelectedIds(prev=>prev.filter(id=>schemas.some(s=>String(s.id)===String(id))));},[schemas]);
+
+  function toggleSelected(id){const key=String(id);setSelectedIds(prev=>prev.some(x=>String(x)===key)?prev.filter(x=>String(x)!==key):[...prev,key]);}
+  function toggleAllFiltered(){const ids=filtered.map(s=>String(s.id));if(ids.length===0)return;setSelectedIds(prev=>{const cur=new Set(prev.map(String));const all=ids.every(id=>cur.has(id));if(all)ids.forEach(id=>cur.delete(id));else ids.forEach(id=>cur.add(id));return [...cur];});}
 
   function handleImport(inc){inc.forEach(s=>{const raw=normalizeSchemaText(s.raw);const sections=parseSections(raw);const existing=schemas.find(x=>x.id===s.id);if(existing){const inWork=existing.status!=="unassigned"||existing.editor||existing.editedSections;saveSchema({...existing,title:s.title||existing.title,...(inWork?{editedSections:sections}:{original:raw,sections,editedSections:null})});}else{saveSchema({id:s.id,title:s.title,original:raw,sections,editedSections:null,editor:null,status:"unassigned",comments:{}});}});setShowImport(false);}
   function handleAssign(ids,editor){ids.forEach(id=>{const s=schemas.find(x=>x.id===id);if(s)saveSchema({...s,editor,status:"editing",editedSections:s.editedSections||{...s.sections}});});setShowAssign(false);}
@@ -285,6 +295,7 @@ export default function Home(){
           {mode==="manager"&&schemas.length>0&&<button onClick={()=>{setReassignMode(false);setShowAssign(true);}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.o+"40",background:P.os,color:P.o,fontSize:11,fontWeight:600,cursor:"pointer"}}>👤</button>}
           {mode==="manager"&&schemas.length>0&&<button onClick={()=>{setReassignMode(true);setShowAssign(true);}} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.y+"40",background:P.ys,color:P.y,fontSize:11,fontWeight:600,cursor:"pointer"}}>🔄</button>}
           {mode==="manager"&&<button onClick={()=>setShowUsers(true)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.bl+"40",background:P.bls,color:P.bl,fontSize:11,fontWeight:600,cursor:"pointer"}}>👥</button>}
+          {mode==="manager"&&schemas.length>0&&<button title={selectedIds.length?"Выгрузить выбранные схемы":"Сначала отметьте нужные схемы галочками"} disabled={!selectedIds.length} onClick={()=>exportXlsx(schemas,{selectedIds})} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+(selectedIds.length?P.g:P.b),background:selectedIds.length?P.gs:"transparent",color:selectedIds.length?P.g:P.d,fontSize:11,fontWeight:600,cursor:selectedIds.length?"pointer":"default",opacity:selectedIds.length?1:.65}}>↓ Выбранные ({selectedIds.length})</button>}
           {mode==="manager"&&schemas.length>0&&<button title="Выгрузить только схемы со статусом «Принято»" onClick={()=>exportXlsx(schemas,{approvedOnly:true})} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.a+"40",background:P.as,color:P.a,fontSize:11,fontWeight:600,cursor:"pointer"}}>↓ Принятые ({schemas.filter(s=>s.status==="approved").length})</button>}
           <button onClick={()=>setUser(null)} style={{padding:"6px 14px",borderRadius:6,border:"1px solid "+P.r+"40",background:P.rs,color:P.r,fontSize:11,fontWeight:600,cursor:"pointer"}}>Выйти</button>
         </div>
@@ -298,11 +309,16 @@ export default function Home(){
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:8,marginBottom:24}}>
             {["unassigned","editing","review","approved","rejected"].map(st=>{const c=schemas.filter(s=>s.status===st).length;const i=STS[st];return<div key={st} style={{background:i.bg,border:"1px solid "+i.c+"25",borderRadius:10,padding:"12px 14px",textAlign:"center"}}><div style={{fontSize:22,fontWeight:800,color:i.c}}>{c}</div><div style={{fontSize:10,color:i.c,marginTop:2}}>{i.l}</div></div>;})}
           </div>
-          <div style={{display:"flex",gap:5,marginBottom:14,flexWrap:"wrap"}}>
+          <div style={{display:"flex",gap:5,marginBottom:10,flexWrap:"wrap"}}>
             <STab label="Все" active={filterEditor==="all"} onClick={()=>setFilterEditor("all")} count={schemas.length}/>{editors.map(e=><STab key={e} label={e} active={filterEditor===e} onClick={()=>setFilterEditor(e)} count={schemas.filter(s=>s.editor===e).length}/>)}<STab label="∅" active={filterEditor==="__none"} onClick={()=>setFilterEditor("__none")} count={schemas.filter(s=>!s.editor).length}/>
           </div>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,padding:"8px 10px",background:P.s,border:"1px solid "+P.b,borderRadius:7}}>
+            <label style={{display:"flex",alignItems:"center",gap:7,fontSize:11,color:P.m,cursor:"pointer"}}><input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered}/>Выбрать все в списке ({filtered.length})</label>
+            <span style={{fontSize:10,color:selectedIds.length?P.g:P.d}}>Выбрано: {selectedIds.length}</span>
+            {selectedIds.length>0&&<button onClick={()=>setSelectedIds([])} style={{marginLeft:"auto",padding:"3px 8px",borderRadius:5,border:"1px solid "+P.b,background:"transparent",color:P.d,fontSize:9,cursor:"pointer"}}>Снять выбор</button>}
+          </div>
           <div style={{display:"flex",flexDirection:"column",gap:4}}>
-            {filtered.map(s=><div key={s.id} onClick={()=>{setSelId(s.id);setSec("ПЛАН");}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",background:P.s,border:"1px solid "+P.b,borderRadius:7,cursor:"pointer"}}><div style={{display:"flex",alignItems:"center",gap:8}}><span style={{fontSize:11,fontWeight:700,color:P.d,minWidth:36}}>#{s.id}</span><span style={{fontSize:12,fontWeight:500}}>{s.title}</span></div><div style={{display:"flex",gap:8,alignItems:"center"}}>{s.editor&&<span style={{fontSize:10,color:P.d,background:P.s3,padding:"2px 8px",borderRadius:4}}>{s.editor}</span>}<Badge status={s.status}/></div></div>)}
+            {filtered.map(s=><div key={s.id} onClick={()=>{setSelId(s.id);setSec("ПЛАН");}} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"9px 12px",background:selectedSet.has(String(s.id))?P.gs:P.s,border:"1px solid "+(selectedSet.has(String(s.id))?P.g+"45":P.b),borderRadius:7,cursor:"pointer"}}><div style={{display:"flex",alignItems:"center",gap:8}}><input type="checkbox" checked={selectedSet.has(String(s.id))} onClick={e=>e.stopPropagation()} onChange={()=>toggleSelected(s.id)} style={{cursor:"pointer"}}/><span style={{fontSize:11,fontWeight:700,color:P.d,minWidth:36}}>#{s.id}</span><span style={{fontSize:12,fontWeight:500}}>{s.title}</span></div><div style={{display:"flex",gap:8,alignItems:"center"}}>{s.editor&&<span style={{fontSize:10,color:P.d,background:P.s3,padding:"2px 8px",borderRadius:4}}>{s.editor}</span>}<Badge status={s.status}/></div></div>)}
           </div>
         </div>
       ):(
@@ -310,7 +326,8 @@ export default function Home(){
           <div style={{width:240,borderRight:"1px solid "+P.b,overflowY:"auto",padding:"12px 8px",flexShrink:0}}>
             {mode==="manager"&&<button onClick={()=>setSelId(null)} style={{width:"100%",padding:"6px",borderRadius:6,border:"1px solid "+P.b,background:"transparent",color:P.m,fontSize:11,cursor:"pointer",marginBottom:8}}>← Дашборд</button>}
             {mode!=="editor"&&editors.length>0&&<div style={{display:"flex",gap:3,marginBottom:10,flexWrap:"wrap",padding:"0 4px"}}>{["all",...editors].map(e=>{const a=filterEditor===e;return<button key={e} onClick={()=>setFilterEditor(e)} style={{fontSize:9,padding:"3px 8px",borderRadius:4,border:"1px solid "+(a?P.ba:P.b),background:a?P.as:"transparent",color:a?P.a:P.d,cursor:"pointer",fontWeight:600}}>{e==="all"?"Все":e}</button>;})}</div>}
-            {filtered.map(s=>{const a=selId===s.id;return<div key={s.id} onClick={()=>{setSelId(s.id);setSec("ПЛАН");}} style={{padding:"8px 10px",borderRadius:7,cursor:"pointer",marginBottom:2,background:a?P.as:"transparent",border:"1px solid "+(a?P.ba:"transparent")}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}><span style={{fontSize:10,fontWeight:700,color:a?P.a:P.d}}>#{s.id}</span><Badge status={s.status}/></div><div style={{fontSize:11,fontWeight:500,color:P.t,lineHeight:1.3}}>{s.title}</div>{s.editor&&<div style={{fontSize:9,color:P.d,marginTop:2}}>{s.editor}</div>}</div>;})}
+            {mode==="manager"&&<div style={{display:"flex",alignItems:"center",gap:7,padding:"5px 7px 9px",marginBottom:4,borderBottom:"1px solid "+P.b}}><input type="checkbox" checked={allFilteredSelected} onChange={toggleAllFiltered} style={{cursor:"pointer"}}/><span style={{fontSize:9,color:P.d}}>Все в списке</span>{selectedIds.length>0&&<span style={{marginLeft:"auto",fontSize:9,color:P.g}}>{selectedIds.length} выбрано</span>}</div>}
+            {filtered.map(s=>{const a=selId===s.id;const picked=selectedSet.has(String(s.id));return<div key={s.id} onClick={()=>{setSelId(s.id);setSec("ПЛАН");}} style={{padding:"8px 10px",borderRadius:7,cursor:"pointer",marginBottom:2,background:a?P.as:picked?P.gs:"transparent",border:"1px solid "+(a?P.ba:picked?P.g+"45":"transparent")}}><div style={{display:"flex",justifyContent:"space-between",marginBottom:3,alignItems:"center"}}><div style={{display:"flex",alignItems:"center",gap:6}}>{mode==="manager"&&<input type="checkbox" checked={picked} onClick={e=>e.stopPropagation()} onChange={()=>toggleSelected(s.id)} style={{cursor:"pointer"}}/>}<span style={{fontSize:10,fontWeight:700,color:a?P.a:P.d}}>#{s.id}</span></div><Badge status={s.status}/></div><div style={{fontSize:11,fontWeight:500,color:P.t,lineHeight:1.3}}>{s.title}</div>{s.editor&&<div style={{fontSize:9,color:P.d,marginTop:2}}>{s.editor}</div>}</div>;})}
           </div>
           <div style={{flex:1,overflowY:"auto",padding:18}}>
             {sel?(<div style={{maxWidth:920}}>
